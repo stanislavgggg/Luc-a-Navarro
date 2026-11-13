@@ -24,6 +24,7 @@ users = sa.Table(
     sa.Column("consent_at", sa.DateTime(timezone=True)),
     sa.Column("consent_version", sa.String(32)),
     sa.Column("opted_out_at", sa.DateTime(timezone=True)),
+    sa.Column("sheet_synced_at", sa.DateTime(timezone=True)),  # когда лид успешно ушёл в Google Sheets
 )
 
 
@@ -48,6 +49,10 @@ class Database:
     async def init(self) -> None:
         async with self.engine.begin() as conn:
             await conn.run_sync(metadata.create_all)
+            # create_all не добавляет колонки в уже существующую таблицу: докидываем сами
+            cols = await conn.run_sync(lambda c: {col["name"] for col in sa.inspect(c).get_columns("users")})
+            if "sheet_synced_at" not in cols:
+                await conn.execute(sa.text("ALTER TABLE users ADD COLUMN sheet_synced_at TIMESTAMP WITH TIME ZONE"))
 
     async def close(self) -> None:
         await self.engine.dispose()
@@ -96,8 +101,33 @@ class Database:
                     consent_at=now,
                     consent_version=consent_version,
                     opted_out_at=None,
+                    sheet_synced_at=None,
                 )
             )
+
+    async def get_user(self, telegram_id: int):
+        async with self.engine.connect() as conn:
+            return (await conn.execute(sa.select(users).where(users.c.telegram_id == telegram_id))).first()
+
+    async def mark_synced(self, telegram_ids: list[int]) -> None:
+        if not telegram_ids:
+            return
+        async with self.engine.begin() as conn:
+            await conn.execute(
+                sa.update(users).where(users.c.telegram_id.in_(telegram_ids)).values(sheet_synced_at=utcnow())
+            )
+
+    async def unsynced(self) -> list:
+        """Лиды с номером, без отписки, которые ещё не ушли в таблицу."""
+        async with self.engine.connect() as conn:
+            rows = await conn.execute(
+                sa.select(users).where(
+                    users.c.phone_e164.is_not(None),
+                    users.c.opted_out_at.is_(None),
+                    users.c.sheet_synced_at.is_(None),
+                ).order_by(users.c.consent_at)
+            )
+            return list(rows)
 
     async def opt_out(self, telegram_id: int) -> bool:
         async with self.engine.begin() as conn:

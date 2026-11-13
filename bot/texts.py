@@ -45,9 +45,10 @@ def success(first_name: str | None, coupon_block: str, whatsapp_number: str) -> 
         if whatsapp_number
         else ""
     )
+    coupon = f"{coupon_block}\n\n" if coupon_block else ""
     return (
         f"✅ ¡Listo{name}! Ya estás dentro.\n\n"
-        f"{coupon_block}\n\n"
+        f"{coupon}"
         "A partir de ahora te aviso por WhatsApp de los mejores chollos, cupones y promociones. 🔥"
         f"{save}\n\n"
         "Cuando quieras ver las ofertas del día, pulsa «🔥 Chollos de hoy». "
@@ -72,3 +73,9 @@ def erased() -> str:
 
 def need_start() -> str:
     return "Escribe /start para empezar 👋"
+
+
+def privacy(url: str) -> str:
+    if not url:
+        return "La política de privacidad aún no está disponible. Escríbenos y te la enviamos."
+    return f'🔒 Aquí tienes nuestra <a href="{html.escape(url)}">política de privacidad</a>.'

@@ -5,6 +5,8 @@ import json
 import logging
 from pathlib import Path
 
+from .config import Config
+
 log = logging.getLogger(__name__)
 
 OFFERS_PATH = Path(__file__).resolve().parent.parent / "offers.json"
@@ -17,14 +19,30 @@ def load_offers() -> dict:
         return json.load(f)
 
 
-def warn_if_placeholder() -> None:
+def get_welcome_coupon(cfg: Config) -> dict | None:
+    """Купон из переменных WELCOME_COUPON_* (приоритет) поверх welcome_coupon из offers.json.
+    Нет кода (или осталась заглушка) → None: людям не отправляем выдуманный код."""
+    coupon = dict(load_offers().get("welcome_coupon", {}))
+    if cfg.welcome_coupon_code:
+        coupon["code"] = cfg.welcome_coupon_code
+    if cfg.welcome_coupon_title:
+        coupon["title"] = cfg.welcome_coupon_title
+    if cfg.welcome_coupon_description:
+        coupon["description"] = cfg.welcome_coupon_description
+    code = (coupon.get("code") or "").strip()
+    if not code or code == PLACEHOLDER_CODE:
+        return None
+    return coupon
+
+
+def warn_if_no_coupon(cfg: Config) -> None:
     try:
-        offers = load_offers()
+        coupon = get_welcome_coupon(cfg)
     except Exception:
         log.exception("Не удалось прочитать offers.json")
         return
-    if offers.get("welcome_coupon", {}).get("code") == PLACEHOLDER_CODE:
-        log.warning("offers.json содержит заглушку вместо реального купона: замени её до запуска трафика")
+    if coupon is None:
+        log.error("Купон не задан (WELCOME_COUPON_CODE): после номера человек получит подтверждение БЕЗ кода")
 
 
 def format_coupon(coupon: dict) -> str:

@@ -8,16 +8,16 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.types import BotCommand
 
-from . import admin, handlers
+from . import admin, handlers, site
 from .config import load_config
 from .db import Database
-from .offers import warn_if_placeholder
+from .offers import warn_if_no_coupon
 
 
 async def run() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     cfg = load_config()
-    warn_if_placeholder()
+    warn_if_no_coupon(cfg)
 
     db = Database(cfg.database_url)
     await db.init()
@@ -35,12 +35,16 @@ async def run() -> None:
             BotCommand(command="start", description="Empezar"),
             BotCommand(command="stop", description="Darme de baja de las ofertas"),
             BotCommand(command="borrar", description="Borrar mis datos"),
+            BotCommand(command="privacidad", description="Política de privacidad"),
         ]
     )
     await bot.delete_webhook(drop_pending_updates=False)
+    runner = await site.start_site(cfg)
     try:
         await dp.start_polling(bot)
     finally:
+        if runner is not None:
+            await runner.cleanup()
         await db.close()
         await bot.session.close()
 

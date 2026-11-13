@@ -10,6 +10,7 @@ from aiogram.exceptions import TelegramAPIError, TelegramForbiddenError, Telegra
 from aiogram.filters import Command, CommandObject
 from aiogram.types import BufferedInputFile, Message
 
+from . import sheets
 from .config import Config
 from .db import Database
 
@@ -81,6 +82,17 @@ async def export(message: Message, db: Database, cfg: Config) -> None:
         BufferedInputFile(data, filename="leads.csv"),
         caption=f"{len(rows)} números con consentimiento y sin baja",
     )
+
+
+@router.message(Command("resync"))
+async def resync(message: Message, db: Database, cfg: Config) -> None:
+    if not _is_admin(message, cfg):
+        return
+    if not cfg.sheets_webhook_url:
+        await message.answer("SHEETS_WEBHOOK_URL no está configurado.")
+        return
+    ok, failed = await sheets.resync_all(db, cfg)
+    await message.answer(f"Enviados a Google Sheets: {ok}. Fallidos: {failed}.")
 
 
 @router.message(Command("broadcast"))

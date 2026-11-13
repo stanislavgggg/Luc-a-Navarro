@@ -14,10 +14,10 @@ from aiogram.types import (
     ReplyKeyboardRemove,
 )
 
-from . import texts
+from . import sheets, texts
 from .config import CONSENT_VERSION, Config
 from .db import Database
-from .offers import format_coupon, format_deals, load_offers
+from .offers import format_coupon, format_deals, get_welcome_coupon, load_offers
 from .phone import parse_phone
 
 log = logging.getLogger(__name__)
@@ -59,10 +59,11 @@ async def _touch(message: Message, db: Database, source: str | None = None) -> N
 async def on_start(message: Message, command: CommandObject, db: Database, cfg: Config) -> None:
     await _touch(message, db, clean_source(command.args))
     text = texts.welcome(cfg.persona_name, cfg.brand_name, cfg.privacy_url, message.from_user.first_name)
-    photo = Path(cfg.persona_photo)
-    if photo.is_file() and len(text) <= 1024:
+    photo = Path(cfg.persona_photo) if cfg.persona_photo else None
+    has_photo = photo is not None and photo.is_file()
+    if has_photo and len(text) <= 1024:
         await message.answer_photo(FSInputFile(photo), caption=text, reply_markup=contact_kb())
-    elif photo.is_file():
+    elif has_photo:
         await message.answer_photo(FSInputFile(photo))
         await message.answer(text, reply_markup=contact_kb(), disable_web_page_preview=True)
     else:
@@ -90,10 +91,11 @@ async def on_contact(message: Message, db: Database, cfg: Config) -> None:
 
     await db.save_phone(message.from_user.id, parsed.e164, parsed.region, parsed.valid, CONSENT_VERSION)
     log.info("phone saved user=%s region=%s valid=%s", message.from_user.id, parsed.region, parsed.valid)
+    sheets.schedule_sync(db, cfg, message.from_user.id)
 
-    coupon = load_offers().get("welcome_coupon", {})
+    coupon = get_welcome_coupon(cfg)
     await message.answer(
-        texts.success(message.from_user.first_name, format_coupon(coupon), cfg.whatsapp_number),
+        texts.success(message.from_user.first_name, format_coupon(coupon) if coupon else "", cfg.whatsapp_number),
         reply_markup=menu_kb(),
     )
 
@@ -113,6 +115,11 @@ async def on_deals(message: Message, db: Database) -> None:
 async def on_stop(message: Message, db: Database) -> None:
     await db.opt_out(message.from_user.id)
     await message.answer(texts.stopped(), reply_markup=ReplyKeyboardRemove())
+
+
+@router.message(Command("privacidad"))
+async def on_privacy(message: Message, cfg: Config) -> None:
+    await message.answer(texts.privacy(cfg.privacy_url), disable_web_page_preview=True)
 
 
 @router.message(Command("borrar"))

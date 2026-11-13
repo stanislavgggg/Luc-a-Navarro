@@ -70,6 +70,7 @@ def make_cfg(tmp_path, **kw) -> Config:
         whatsapp_number="",
         database_url=f"sqlite+aiosqlite:///{tmp_path}/t.db",
         allowed_regions=frozenset(),
+        welcome_coupon_code="TESTCODE",
     )
     base.update(kw)
     return Config(**base)
@@ -131,7 +132,7 @@ async def test_share_own_contact_saves_and_sends_coupon(env):
     await dp.feed_update(bot, msg(USER, "/start src1"))
     await dp.feed_update(bot, msg(USER, contact=Contact(phone_number="34612345678", first_name="Marta", user_id=USER)))
     last = session.texts()[-1]
-    assert "Ya estás dentro" in last and "Código:" in last
+    assert "Ya estás dentro" in last and "<code>TESTCODE</code>" in last
     rows = await db.export_rows()
     assert len(rows) == 1 and rows[0].phone_e164 == "+34612345678" and rows[0].phone_region == "ES"
     assert rows[0].consent_version and rows[0].consent_at is not None
@@ -208,4 +209,127 @@ async def test_photo_welcome_when_file_exists(tmp_path):
     dp = new_dispatcher(db, cfg, with_admin=False)
     await dp.feed_update(bot, msg(USER, "/start"))
     assert type(session.calls[0]).__name__ == "SendPhoto"
+    await db.close()
+
+
+# ---------- Google Sheets ----------
+import asyncio  # noqa: E402
+
+from bot import sheets  # noqa: E402
+
+
+async def test_lead_goes_to_sheet_in_quiz_schema_and_is_marked_synced(tmp_path, monkeypatch):
+    cfg = make_cfg(tmp_path, sheets_webhook_url="https://script.google.com/macros/s/X/exec", sheets_secret="s3cret")
+    db = Database(cfg.database_url)
+    await db.init()
+    session = FakeSession()
+    bot = Bot("123456:TEST", session=session)
+    dp = new_dispatcher(db, cfg)
+
+    sent: list[dict] = []
+
+    async def fake_post(cfg_, rows, attempts=3):
+        sent.extend(rows)
+        return {"ok": True, "added": len(rows), "skipped": 0, "tab": "Test"}
+
+    monkeypatch.setattr(sheets, "post_rows", fake_post)
+
+    await dp.feed_update(bot, msg(USER, "/start es_tgads_chollos1"))
+    await dp.feed_update(bot, msg(USER, contact=Contact(phone_number="34612345678", first_name="Marta", user_id=USER)))
+    await asyncio.sleep(0.1)  # фоновая задача
+
+    assert len(sent) == 1
+    row = sent[0]
+    assert row["phone"] == "+34612345678" and row["geo"] == "ES"
+    assert row["quiz_id"] == "es_tg_chollos_bot" and row["whatsapp_consent"] is True and row["consent"] is True
+    assert row["utm_source"] == "telegram" and row["utm_campaign"] == "es_tgads_chollos1"
+    assert row["consent_text_version"] and row["timestamp"]
+    assert await db.unsynced() == []  # помечен как отправленный
+    await db.close()
+
+
+async def test_failed_sync_stays_pending_and_resync_delivers(tmp_path, monkeypatch):
+    cfg = make_cfg(tmp_path, sheets_webhook_url="https://script.google.com/macros/s/X/exec", sheets_secret="s3cret")
+    db = Database(cfg.database_url)
+    await db.init()
+    session = FakeSession()
+    bot = Bot("123456:TEST", session=session)
+    dp = new_dispatcher(db, cfg)
+
+    async def down(cfg_, rows, attempts=3):
+        return None
+
+    monkeypatch.setattr(sheets, "post_rows", down)
+    await dp.feed_update(bot, msg(USER, "/start"))
+    await dp.feed_update(bot, msg(USER, contact=Contact(phone_number="34612345678", first_name="M", user_id=USER)))
+    await asyncio.sleep(0.1)
+    assert len(await db.unsynced()) == 1
+
+    delivered: list[dict] = []
+
+    async def up(cfg_, rows, attempts=3):
+        delivered.extend(rows)
+        return {"ok": True, "added": len(rows), "skipped": 0, "tab": "T"}
+
+    monkeypatch.setattr(sheets, "post_rows", up)
+    await dp.feed_update(bot, msg(ADMIN, "/resync"))
+    assert len(delivered) == 1 and await db.unsynced() == []
+    assert "Enviados a Google Sheets: 1" in session.texts()[-1]
+    await db.close()
+
+
+async def test_migration_adds_sheet_synced_at_to_old_table(tmp_path):
+    import sqlalchemy as sa
+
+    url = f"sqlite+aiosqlite:///{tmp_path}/old.db"
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    eng = create_async_engine(url)
+    async with eng.begin() as conn:  # «старая» схема без sheet_synced_at
+        await conn.execute(sa.text(
+            "CREATE TABLE users (telegram_id BIGINT PRIMARY KEY, username VARCHAR(64), first_name VARCHAR(128), "
+            "language_code VARCHAR(16), source VARCHAR(128), started_at DATETIME NOT NULL, last_seen_at DATETIME NOT NULL, "
+            "phone_e164 VARCHAR(20), phone_region VARCHAR(4), phone_valid BOOLEAN, consent_at DATETIME, "
+            "consent_version VARCHAR(32), opted_out_at DATETIME)"
+        ))
+    await eng.dispose()
+    db = Database(url)
+    await db.init()
+    await db.touch_user(1, "u", "n", "es", "src")
+    assert await db.unsynced() == []  # без номера не считается
+    await db.close()
+
+
+async def test_privacy_command(env):
+    dp, bot, session, db, cfg = env
+    await dp.feed_update(bot, msg(USER, "/privacidad"))
+    assert "example.com/privacy" in session.texts()[-1]
+
+
+async def test_no_coupon_configured_sends_no_fake_code(tmp_path):
+    cfg = make_cfg(tmp_path, welcome_coupon_code="")
+    db = Database(cfg.database_url)
+    await db.init()
+    session = FakeSession()
+    bot = Bot("123456:TEST", session=session)
+    dp = new_dispatcher(db, cfg, with_admin=False)
+    await dp.feed_update(bot, msg(USER, "/start"))
+    await dp.feed_update(bot, msg(USER, contact=Contact(phone_number="34612345678", first_name="M", user_id=USER)))
+    out = session.texts()[-1]
+    assert "Ya estás dentro" in out and "Código:" not in out and "EDITA" not in out
+    await db.close()
+
+
+async def test_coupon_from_env_vars(tmp_path):
+    cfg = make_cfg(tmp_path, welcome_coupon_code="CHOLLO10", welcome_coupon_title="10% de regalo",
+                   welcome_coupon_description="Válido hasta el 30/11")
+    db = Database(cfg.database_url)
+    await db.init()
+    session = FakeSession()
+    bot = Bot("123456:TEST", session=session)
+    dp = new_dispatcher(db, cfg, with_admin=False)
+    await dp.feed_update(bot, msg(USER, "/start"))
+    await dp.feed_update(bot, msg(USER, contact=Contact(phone_number="34612345678", first_name="M", user_id=USER)))
+    out = session.texts()[-1]
+    assert "<code>CHOLLO10</code>" in out and "10% de regalo" in out and "Válido hasta el 30/11" in out
     await db.close()
