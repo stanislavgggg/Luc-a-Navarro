@@ -1,0 +1,49 @@
+from __future__ import annotations
+
+import asyncio
+import logging
+
+from aiogram import Bot, Dispatcher
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
+from aiogram.types import BotCommand
+
+from . import admin, handlers
+from .config import load_config
+from .db import Database
+from .offers import warn_if_placeholder
+
+
+async def run() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    cfg = load_config()
+    warn_if_placeholder()
+
+    db = Database(cfg.database_url)
+    await db.init()
+
+    bot = Bot(cfg.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    dp = Dispatcher()
+    dp["db"] = db
+    dp["cfg"] = cfg
+    # admin раньше user: иначе /stats и т.п. не ловятся
+    dp.include_router(admin.router)
+    dp.include_router(handlers.router)
+
+    await bot.set_my_commands(
+        [
+            BotCommand(command="start", description="Empezar"),
+            BotCommand(command="stop", description="Darme de baja de las ofertas"),
+            BotCommand(command="borrar", description="Borrar mis datos"),
+        ]
+    )
+    await bot.delete_webhook(drop_pending_updates=False)
+    try:
+        await dp.start_polling(bot)
+    finally:
+        await db.close()
+        await bot.session.close()
+
+
+if __name__ == "__main__":
+    asyncio.run(run())
