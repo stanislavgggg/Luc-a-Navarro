@@ -219,7 +219,7 @@ from bot import sheets  # noqa: E402
 
 
 async def test_lead_goes_to_sheet_in_quiz_schema_and_is_marked_synced(tmp_path, monkeypatch):
-    cfg = make_cfg(tmp_path, sheets_webhook_url="https://script.google.com/macros/s/X/exec", sheets_secret="s3cret")
+    cfg = make_cfg(tmp_path, sheets_webhook_url="https://script.google.com/macros/s/X/exec")
     db = Database(cfg.database_url)
     await db.init()
     session = FakeSession()
@@ -228,11 +228,11 @@ async def test_lead_goes_to_sheet_in_quiz_schema_and_is_marked_synced(tmp_path, 
 
     sent: list[dict] = []
 
-    async def fake_post(cfg_, rows, attempts=3):
-        sent.extend(rows)
-        return {"ok": True, "added": len(rows), "skipped": 0, "tab": "Test"}
+    async def fake_post(cfg_, row, attempts=3):
+        sent.append(row)
+        return {"ok": True}
 
-    monkeypatch.setattr(sheets, "post_rows", fake_post)
+    monkeypatch.setattr(sheets, "post_lead", fake_post)
 
     await dp.feed_update(bot, msg(USER, "/start es_tgads_chollos1"))
     await dp.feed_update(bot, msg(USER, contact=Contact(phone_number="34612345678", first_name="Marta", user_id=USER)))
@@ -240,26 +240,26 @@ async def test_lead_goes_to_sheet_in_quiz_schema_and_is_marked_synced(tmp_path, 
 
     assert len(sent) == 1
     row = sent[0]
-    assert row["phone"] == "+34612345678" and row["geo"] == "ES"
-    assert row["quiz_id"] == "es_tg_chollos_bot" and row["whatsapp_consent"] is True and row["consent"] is True
+    assert row["phone"] == "+34612345678" and row["geo"] == "ES" and row["lead_id"] == f"tg_{USER}"
+    assert row["quiz_id"] == "es_tg_chollos_bot" and row["whatsapp_consent"] is True and row["consent"] is False
     assert row["utm_source"] == "telegram" and row["utm_campaign"] == "es_tgads_chollos1"
-    assert row["consent_text_version"] and row["timestamp"]
+    assert row["consent_text_version"] and "rows" not in row and "secret" not in row
     assert await db.unsynced() == []  # помечен как отправленный
     await db.close()
 
 
 async def test_failed_sync_stays_pending_and_resync_delivers(tmp_path, monkeypatch):
-    cfg = make_cfg(tmp_path, sheets_webhook_url="https://script.google.com/macros/s/X/exec", sheets_secret="s3cret")
+    cfg = make_cfg(tmp_path, sheets_webhook_url="https://script.google.com/macros/s/X/exec")
     db = Database(cfg.database_url)
     await db.init()
     session = FakeSession()
     bot = Bot("123456:TEST", session=session)
     dp = new_dispatcher(db, cfg)
 
-    async def down(cfg_, rows, attempts=3):
+    async def down(cfg_, row, attempts=3):
         return None
 
-    monkeypatch.setattr(sheets, "post_rows", down)
+    monkeypatch.setattr(sheets, "post_lead", down)
     await dp.feed_update(bot, msg(USER, "/start"))
     await dp.feed_update(bot, msg(USER, contact=Contact(phone_number="34612345678", first_name="M", user_id=USER)))
     await asyncio.sleep(0.1)
@@ -267,11 +267,11 @@ async def test_failed_sync_stays_pending_and_resync_delivers(tmp_path, monkeypat
 
     delivered: list[dict] = []
 
-    async def up(cfg_, rows, attempts=3):
-        delivered.extend(rows)
-        return {"ok": True, "added": len(rows), "skipped": 0, "tab": "T"}
+    async def up(cfg_, row, attempts=3):
+        delivered.append(row)
+        return {"ok": True}
 
-    monkeypatch.setattr(sheets, "post_rows", up)
+    monkeypatch.setattr(sheets, "post_lead", up)
     await dp.feed_update(bot, msg(ADMIN, "/resync"))
     assert len(delivered) == 1 and await db.unsynced() == []
     assert "Enviados a Google Sheets: 1" in session.texts()[-1]

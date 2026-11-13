@@ -64,7 +64,6 @@ class Config:
     database_url: str
     allowed_regions: frozenset[str] = field(default_factory=frozenset)
     sheets_webhook_url: str = ""
-    sheets_secret: str = ""
     legal_name: str = ""
     legal_id: str = ""
     legal_address: str = ""
@@ -90,7 +89,6 @@ def load_config() -> Config:
         database_url=_normalize_db_url(os.environ.get("DATABASE_URL", "sqlite+aiosqlite:///./data.db").strip()),
         allowed_regions=frozenset(x.upper() for x in _csv(os.environ.get("ALLOWED_REGIONS", ""))),
         sheets_webhook_url=os.environ.get("SHEETS_WEBHOOK_URL", "").strip(),
-        sheets_secret=os.environ.get("SHEETS_SECRET", "").strip(),
         legal_name=os.environ.get("LEGAL_NAME", "").strip(),
         legal_id=os.environ.get("LEGAL_ID", "").strip(),
         legal_address=os.environ.get("LEGAL_ADDRESS", "").strip(),
@@ -102,8 +100,6 @@ def load_config() -> Config:
 
     if not cfg.privacy_url:
         log.warning("PRIVACY_URL пуст: в тексте согласия не будет ссылки на политику конфиденциальности (нужна по RGPD)")
-    if cfg.sheets_webhook_url and not cfg.sheets_secret:
-        log.warning("SHEETS_WEBHOOK_URL задан, а SHEETS_SECRET пуст: скрипт в таблице отклонит запросы")
     if not cfg.sheets_webhook_url:
         log.warning("SHEETS_WEBHOOK_URL пуст: лиды не будут отправляться в Google Sheets (останутся только в базе, /export)")
     missing = [n for n, v in (("LEGAL_NAME", cfg.legal_name), ("LEGAL_ID", cfg.legal_id),
