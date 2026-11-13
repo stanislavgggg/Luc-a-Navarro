@@ -103,9 +103,11 @@ def load_config() -> Config:
     if not cfg.sheets_webhook_url:
         log.warning("SHEETS_WEBHOOK_URL пуст: лиды не будут отправляться в Google Sheets (останутся только в базе, /export)")
     missing = [n for n, v in (("LEGAL_NAME", cfg.legal_name), ("LEGAL_ID", cfg.legal_id),
-                              ("LEGAL_ADDRESS", cfg.legal_address), ("PRIVACY_EMAIL", cfg.privacy_email)) if not v]
+                              ("LEGAL_ADDRESS", cfg.legal_address)) if not v]
     if missing:
         log.warning("Политика приватности: не заданы %s, на странице будет «[pendiente de completar]»", ", ".join(missing))
+    if not cfg.privacy_email:
+        log.warning("PRIVACY_EMAIL не задан: в политике контакт указан через бота и почтовый адрес (лучше задать почту)")
     if not cfg.admin_ids:
         log.warning("ADMIN_IDS пуст: команды /stats, /export и /broadcast никому не доступны")
     return cfg

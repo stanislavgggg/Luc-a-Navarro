@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import csv
+import datetime as dt
 import io
 import logging
+from zoneinfo import ZoneInfo
 
 from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramAPIError, TelegramForbiddenError, TelegramRetryAfter
@@ -15,6 +17,8 @@ from .config import Config
 from .db import Database
 
 log = logging.getLogger(__name__)
+
+MADRID = ZoneInfo("Europe/Madrid")
 
 router = Router(name="admin")
 router.message.filter(F.chat.type == "private")
@@ -29,25 +33,44 @@ def _is_admin(message: Message, cfg: Config) -> bool:
     return message.from_user is not None and message.from_user.id in cfg.admin_ids
 
 
+def _pct(part: int, whole: int) -> str:
+    return f"{part / whole * 100:.0f}%" if whole else "0%"
+
+
+def _source_lines(rows: list[tuple[str, int, int]]) -> list[str]:
+    return [f"{src}: {started} / {phones} ({_pct(phones, started)})" for src, started, phones in rows]
+
+
 @router.message(Command("stats"))
 async def stats(message: Message, db: Database, cfg: Config) -> None:
     if not _is_admin(message, cfg):
         return
     s = await db.stats()
-    conv = f"{s.with_phone / s.total_started * 100:.1f}%" if s.total_started else "0%"
+    now = dt.datetime.now(MADRID)
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    today = await db.window(today_start)
+    week = await db.window(today_start - dt.timedelta(days=6))  # сегодня и 6 предыдущих дней
     lines = [
         "📊 <b>Estadísticas</b>",
         f"Han pulsado /start: <b>{s.total_started}</b>",
-        f"Compartieron número: <b>{s.with_phone}</b> ({conv})",
+        f"Compartieron número: <b>{s.with_phone}</b> ({_pct(s.with_phone, s.total_started)})",
         f"Activos (sin baja): <b>{s.active}</b>",
         f"Bajas: {s.opted_out}",
+        "",
+        "<b>Por periodo (start → número):</b>",
+        f"Hoy: {today.started} → {today.phones} ({_pct(today.phones, today.started)})",
+        f"7 días: {week.started} → {week.phones} ({_pct(week.phones, week.started)})",
     ]
     if s.by_region:
         lines.append("\n<b>Por país (activos):</b>")
         lines += [f"{region}: {n}" for region, n in s.by_region]
     if s.by_source:
-        lines.append("\n<b>Por source (start / con número):</b>")
-        lines += [f"{src}: {started} / {phones}" for src, started, phones in s.by_source]
+        lines.append("\n<b>Por source, total (start / número, conversión):</b>")
+        lines += _source_lines([(a, b, c) for a, b, c in s.by_source])
+    if week.by_source:
+        lines.append("\n<b>Por source, últimos 7 días:</b>")
+        lines += _source_lines(week.by_source)
+    lines.append("\nHora de Madrid. Se cuenta por fecha del primer /start.")
     await message.answer("\n".join(lines))
 
 

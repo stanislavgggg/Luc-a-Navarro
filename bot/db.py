@@ -42,6 +42,14 @@ class Stats:
     by_source: list[tuple[str, int, int]]  # source, started, phones
 
 
+@dataclass
+class Window:
+    """Когорта: люди, нажавшие /start за период, и сколько из них поделились номером."""
+    started: int
+    phones: int
+    by_source: list[tuple[str, int, int]]
+
+
 class Database:
     def __init__(self, url: str):
         self.engine: AsyncEngine = create_async_engine(url, pool_pre_ping=True)
@@ -170,6 +178,25 @@ class Database:
                 .order_by(users.c.consent_at)
             )
             return list(rows)
+
+    async def window(self, since: dt.datetime, limit: int = 15) -> Window:
+        src = sa.func.coalesce(users.c.source, "(sin source)")
+        async with self.engine.connect() as conn:
+            cond = users.c.started_at >= since
+            started = (await conn.execute(sa.select(sa.func.count()).select_from(users).where(cond))).scalar_one()
+            phones = (
+                await conn.execute(
+                    sa.select(sa.func.count()).select_from(users).where(cond, users.c.phone_e164.is_not(None))
+                )
+            ).scalar_one()
+            rows = await conn.execute(
+                sa.select(src, sa.func.count(), sa.func.count(users.c.phone_e164))
+                .where(cond)
+                .group_by(src)
+                .order_by(sa.func.count().desc())
+                .limit(limit)
+            )
+            return Window(started, phones, [(r[0], r[1], r[2]) for r in rows])
 
     async def stats(self) -> Stats:
         async with self.engine.connect() as conn:

@@ -18,9 +18,10 @@ def test_render_fills_legal_fields_and_escapes():
     assert "p@x.eu" in page and "{{" not in page and "pendiente" not in page
 
 
-def test_missing_fields_are_visibly_marked():
-    page = render_policy(cfg())
-    assert page.count("[pendiente de completar]") >= 4 and "{{" not in page
+def test_missing_email_uses_bot_contact_without_placeholders():
+    page = render_policy(cfg(legal_name="N", legal_id="1", legal_address="A"))
+    assert "pendiente" not in page and "{{" not in page and "<mark>" not in page
+    assert "a través de este bot de Telegram" in page
 
 
 async def test_routes():

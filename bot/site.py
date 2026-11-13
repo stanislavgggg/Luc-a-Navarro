@@ -18,6 +18,25 @@ POLICY_UPDATED = "13 de noviembre de 2026"
 MISSING = '<mark>[pendiente de completar]</mark>'
 
 
+def contact_values(cfg: Config) -> dict[str, str]:
+    """Если почты нет, контакт идёт через самого бота и почтовый адрес компании, без пустых заглушек."""
+    email = html.escape(cfg.privacy_email) if cfg.privacy_email else ""
+    if email:
+        return {
+            "CONTACT_LINE": f"Correo de contacto para privacidad: <strong>{email}</strong>",
+            "CONTACT_WAY": f"enviando un correo a {email}",
+            "CONTACT_WAY_STRONG": f"escribiendo a <strong>{email}</strong>",
+            "CONTACT_FOOTER": f"Contacto: {email}",
+        }
+    way = "escribiéndonos a través de este bot de Telegram o por correo postal a nuestro domicilio"
+    return {
+        "CONTACT_LINE": "Contacto para privacidad: a través de este bot de Telegram o por correo postal al domicilio indicado.",
+        "CONTACT_WAY": way,
+        "CONTACT_WAY_STRONG": way,
+        "CONTACT_FOOTER": "Contacto: a través de este bot de Telegram.",
+    }
+
+
 def render_policy(cfg: Config) -> str:
     def val(v: str) -> str:
         return html.escape(v) if v else MISSING
@@ -27,7 +46,7 @@ def render_policy(cfg: Config) -> str:
         "LEGAL_NAME": val(cfg.legal_name),
         "LEGAL_ID": val(cfg.legal_id),
         "LEGAL_ADDRESS": val(cfg.legal_address),
-        "PRIVACY_EMAIL": val(cfg.privacy_email),
+        **contact_values(cfg),
         "UPDATED": POLICY_UPDATED,
     }
     page = TEMPLATE.read_text(encoding="utf-8")

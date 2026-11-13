@@ -184,7 +184,9 @@ async def test_admin_stats_export_broadcast(env):
     assert len(session.calls) == n
 
     await dp.feed_update(bot, msg(ADMIN, "/stats"))
-    assert "Compartieron número: <b>1</b>" in session.texts()[-1] and "srcA" in session.texts()[-1]
+    out = session.texts()[-1]
+    assert "Compartieron número: <b>1</b>" in out and "srcA" in out
+    assert "Hoy: 1 → 1 (100%)" in out and "7 días: 1 → 1 (100%)" in out and "srcA: 1 / 1 (100%)" in out
 
     await dp.feed_update(bot, msg(ADMIN, "/export"))
     doc = session.calls[-1]
